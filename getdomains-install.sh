@@ -1,4 +1,6 @@
-#!/bin/sh #set +x
+#!/bin/sh 
+
+#set -x
 
 check_repo() {
     printf "\033[32;1mChecking OpenWrt repo availability...\033[0m\n"
