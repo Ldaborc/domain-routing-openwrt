@@ -1,6 +1,7 @@
 #!/bin/sh
+#set +x
 
-#set -x
+trap 'echo "# $BASH_COMMAND";read' DEBUG
 
 check_repo() {
     printf "\033[32;1mChecking OpenWrt repo availability...\033[0m\n"
