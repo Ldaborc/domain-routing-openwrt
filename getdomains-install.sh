@@ -176,7 +176,7 @@ InstallPackages() {
 
 InstallBaseConfig() {
     _return_code=1
-    InstallPackages "ipset" "kmod-ipt-ipset"
+    InstallPackages "ipset" "kmod-ipt-ipset" "dnsmasq-full"
     RemoveFile "$FILE_RUAB_PKG" > /dev/null
     DlFile "$URL_RUAB_PKG" "$FILE_RUAB_PKG" && $OPKG_CMD install "$FILE_RUAB_PKG" > /dev/null
     _return_code=$?
@@ -1164,9 +1164,9 @@ printf "\033[31;1mAll actions performed here cannot be rolled back automatically
 
 check_repo
 
-add_packages
+#add_packages
 
-dnsmasqfull
+#dnsmasqfull
 
 add_dns_resolver
 
