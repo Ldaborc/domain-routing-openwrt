@@ -215,7 +215,7 @@ TorrcSettings() {
 }
 
 InstallTorConfig() {
-    InstallPackages "tor" "tor-geoip"
+    InstallPackages "tor" "tor-geoip" "obfs4proxy"
     BackupFile "$FILE_TORRC"
     DlFile "$URL_TORRC" "$FILE_TORRC"
     TorrcSettings
@@ -582,7 +582,7 @@ add_tunnel() {
 	if `/etc/init.d/tor enabled`; then
             /etc/init.d/tor restart
 	fi
-		ruantiblock
+		rublock
     fi
     
     if [ "$TUNNEL" == 'wg' ]; then
@@ -636,7 +636,7 @@ add_tunnel() {
         uci set network.@wireguard_wg0[0].allowed_ips='0.0.0.0/0'
         uci set network.@wireguard_wg0[0].endpoint_port=$WG_ENDPOINT_PORT
         uci commit
-		ruantiblock
+		rublock
     fi
 
     if [ "$TUNNEL" == 'ovpn' ]; then
@@ -648,7 +648,7 @@ add_tunnel() {
         fi
         printf "\033[32;1mConfigure route for OpenVPN\033[0m\n"
         route_vpn
-		ruantiblock
+		rublock
     fi
 
     if [ "$TUNNEL" == 'singbox' ]; then
@@ -721,7 +721,7 @@ EOF
     fi
 	
 	if [ "$TUNNEL" == 'TProxy' ]; then
-        ruantiblock
+        rublock
     fi
 
     if [ "$TUNNEL" == 'awg' ]; then
@@ -792,7 +792,7 @@ EOF
         uci set network.@amneziawg_awg0[0].allowed_ips='0.0.0.0/0'
         uci set network.@amneziawg_awg0[0].endpoint_port=$AWG_ENDPOINT_PORT
         uci commit
-		ruantiblock
+		rublock
     fi
 }
 
@@ -1098,7 +1098,7 @@ install_awg_packages() {
     rm -rf "$AWG_DIR"
 }
 
-ruantiblock () {
+rublock () {
 ConfirmBlacklist
 #ConfirmLuaModule
 ConfirmLuciApp
