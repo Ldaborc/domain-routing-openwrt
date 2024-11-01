@@ -577,8 +577,7 @@ add_tunnel() {
             echo "Tor already installed"
         else
             echo "Installing Tor configuration."
-            InstallTorConfig
-		fi	
+            InstallTorConfig	
         if `/etc/init.d/tor enabled`; then
             /etc/init.d/tor restart
     fi
