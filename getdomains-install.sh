@@ -576,13 +576,8 @@ add_tunnel() {
         if opkg list-installed | grep -q tor; then
 	echo "Tor already installed"
         else
-	echo "Installing Tor configuration."
-        InstallTorConfig
+        rublock
 	fi
-	if `/etc/init.d/tor enabled`; then
-            /etc/init.d/tor restart
-	fi
-		rublock
     fi
     
     if [ "$TUNNEL" == 'wg' ]; then
