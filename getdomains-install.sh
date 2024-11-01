@@ -489,85 +489,85 @@ add_dns_resolver() {
 add_tunnel() {
     echo "We can automatically configure only Wireguard and Amnezia WireGuard. OpenVPN, Sing-box(Shadowsocks2022, VMess, VLESS, etc) and tun2socks will need to be configured manually"
     echo "Select a tunnel:"
-    echo "1) Tor" 						#ruantiblock
-	echo "2) OpenVPN" 					#ruantiblock
- 	echo "3) WireGuard" 				#ruantiblock
+    echo "1) Tor" 				#ruantiblock
+    echo "2) OpenVPN" 				#ruantiblock
+    echo "3) WireGuard" 			#ruantiblock
     echo "4) Amnezia WireGuard" 		#ruantiblock
     echo "5) Transparent proxy" 		#ruantiblock
     echo "6) WireGuard For YouTube"
     echo "7) Amnezia WireGuard For YouTube"
     echo "8) Sing-box"
     echo "9) Tun2Socks"
-	echo "0) Skip this step"
+    echo "0) Skip this step"
 
     while true; do
     read -r -p '' TUNNEL
         case $TUNNEL in 
 
         1) 
-            TUNNEL=tor
-			PROXY_MODE=1
-            break
-            ;;
+        TUNNEL=tor
+	PROXY_MODE=1
+        break
+        ;;
 
         2)
-            TUNNEL=ovpn
-			PROXY_MODE=2
-            break
-            ;;
+        TUNNEL=ovpn
+	PROXY_MODE=2
+        break
+        ;;
 
-		3) 
-            TUNNEL=wg
-			PROXY_MODE=2
-            break
-            ;;
+	3) 
+        TUNNEL=wg
+	PROXY_MODE=2
+        break
+        ;;
         
-		4) 
-            TUNNEL=awg
-			PROXY_MODE=2
-            break
-            ;;
+	4) 
+        TUNNEL=awg
+	PROXY_MODE=2
+        break
+        ;;
 
         5) 
-            TUNNEL=0
-            PROXY_MODE=3
-			break
-            ;;
+        TUNNEL=0
+        PROXY_MODE=3
+	break
+        ;;
 
         6) 
-            TUNNEL=wgForYoutube
-            PROXY_MODE=1
-			break
-			;;
+        TUNNEL=wgForYoutube
+        PROXY_MODE=1
+	break
+	;;
 
         7) 
-            TUNNEL=awgForYoutube
-			PROXY_MODE=1
-            break
-            ;;
+        TUNNEL=awgForYoutube
+	PROXY_MODE=1
+        break
+        ;;
 
         8) 
-            TUNNEL=singbox
-			PROXY_MODE=1
-            break
-            ;;
+        TUNNEL=singbox
+	PROXY_MODE=1
+        break
+        ;;
 		
-		9) 
-            TUNNEL=tun2socks
-			PROXY_MODE=1
-            break
-            ;;	
+	9) 
+        TUNNEL=tun2socks
+	PROXY_MODE=1
+        break
+        ;;	
 
         0)
-            echo "Skip"
-            TUNNEL=0
-			PROXY_MODE=1
-            break
-            ;;
+        echo "Skip"
+        TUNNEL=0
+	PROXY_MODE=1
+        break
+        ;;
 
         *)
-            echo "Choose from the following options"
-            ;;
+        echo "Choose from the following options"
+        ;;
         esac
     done
 
@@ -578,8 +578,7 @@ add_tunnel() {
         else
             echo "Installing Tor configuration."
             InstallTorConfig
-			fi
-        if `/etc/init.d/tor enabled`; then
+	if `/etc/init.d/tor enabled`; then
             /etc/init.d/tor restart
     fi
 		
