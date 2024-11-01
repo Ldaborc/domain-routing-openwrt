@@ -2,104 +2,426 @@
 
 #set -x
 
+PREFIX=""
+TOR_USER="tor"
+
+PROXY_MODE=1
+BLACKLIST=0
+LUA_MODULE=0
+LUCI_APP=1
+
+OWRT_VERSION="22.03"
+RUAB_VERSION="0.9.7-1"
+RUAB_MOD_LUA_VERSION="0.9.7-1"
+RUAB_LUCI_APP_VERSION="0.9.7-0"
+BASE_URL="https://raw.githubusercontent.com/gSpotx2f/packages-openwrt/master"
+PKG_DIR="/tmp"
+
+if [ -n "$1" ]; then
+    OWRT_VERSION="$1"
+fi
+
+### URLs
+
+### packages
+URL_RUAB_PKG="${BASE_URL}/${OWRT_VERSION}/ruantiblock_${RUAB_VERSION}_all.ipk"
+URL_MOD_LUA_PKG="${BASE_URL}/${OWRT_VERSION}/ruantiblock-mod-lua_${RUAB_MOD_LUA_VERSION}_all.ipk"
+URL_LUCI_APP_PKG="${BASE_URL}/${OWRT_VERSION}/luci-app-ruantiblock_${RUAB_LUCI_APP_VERSION}_all.ipk"
+URL_LUCI_APP_RU_PKG="${BASE_URL}/${OWRT_VERSION}/luci-i18n-ruantiblock-ru_${RUAB_LUCI_APP_VERSION}_all.ipk"
+### tor
+URL_TORRC="https://raw.githubusercontent.com/gSpotx2f/ruantiblock_openwrt/0.9/tor/etc/tor/torrc"
+### ruantiblock-mod-lua
+URL_LUA_IPTOOL="https://raw.githubusercontent.com/gSpotx2f/iptool-lua/master/5.1/iptool.lua"
+URL_LUA_IDN="https://raw.githubusercontent.com/haste/lua-idn/master/idn.lua"
+
+### Local files
+
+RUAB_CFG_DIR="${PREFIX}/etc/ruantiblock"
+EXEC_DIR="${PREFIX}/usr/bin"
+BACKUP_DIR="${RUAB_CFG_DIR}/autoinstall.bak.`date +%s`"
+### packages
+FILE_RUAB_PKG="${PKG_DIR}/ruantiblock_${RUAB_VERSION}_all.ipk"
+FILE_MOD_LUA_PKG="${PKG_DIR}/ruantiblock-mod-lua_${RUAB_MOD_LUA_VERSION}_all.ipk"
+FILE_LUCI_APP_PKG="${PKG_DIR}/luci-app-ruantiblock_${RUAB_LUCI_APP_VERSION}_all.ipk"
+FILE_LUCI_APP_RU_PKG="${PKG_DIR}/luci-i18n-ruantiblock-ru_${RUAB_LUCI_APP_VERSION}_all.ipk"
+### ruantiblock
+FILE_CONFIG="${RUAB_CFG_DIR}/ruantiblock.conf"
+FILE_FQDN_FILTER="${RUAB_CFG_DIR}/fqdn_filter"
+FILE_IP_FILTER="${RUAB_CFG_DIR}/ip_filter"
+FILE_USER_ENTRIES="${RUAB_CFG_DIR}/user_entries"
+FILE_UCI_CONFIG="${PREFIX}/etc/config/ruantiblock"
+FILE_INIT_SCRIPT="${PREFIX}/etc/init.d/ruantiblock"
+FILE_MAIN_SCRIPT="${EXEC_DIR}/ruantiblock"
+### tor
+FILE_TORRC="${PREFIX}/etc/tor/torrc"
+### ruantiblock-mod-lua
+FILE_LUA_IPTOOL="${PREFIX}/usr/lib/lua/iptool.lua"
+FILE_LUA_IDN="${PREFIX}/usr/lib/lua/idn.lua"
+
+AWK_CMD="awk"
+WGET_CMD=`which wget`
+if [ $? -ne 0 ]; then
+    echo " Error! wget doesn't exists" >&2
+    exit 1
+fi
+WGET_PARAMS="--no-check-certificate -q -O "
+OPKG_CMD=`which opkg`
+if [ $? -ne 0 ]; then
+    echo " Error! opkg doesn't exists" >&2
+    exit 1
+fi
+UCI_CMD=`which uci`
+if [ $? -ne 0 ]; then
+    echo " Error! uci doesn't exists" >&2
+    exit 1
+fi
+
+FileExists() {
+    test -e "$1"
+}
+
+MakeDir() {
+    [ -d "$1" ] || mkdir -p "$1"
+    if [ $? -ne 0 ]; then
+        echo "Error! Can't create directory (${1})" >&2
+        exit 1
+    fi
+}
+
+ChmodExec() {
+    chmod 755 "$1"
+}
+
+RemoveFile() {
+    if [ -e "$1" ]; then
+        echo "Removing ${1}"
+        rm -f "$1"
+    fi
+}
+
+DlFile() {
+    local _dir _file
+    if [ -n "$2" ]; then
+        _dir=`dirname "$2"`
+        MakeDir "$_dir"
+        _file="$2"
+    else
+        _file="-"
+    fi
+    $WGET_CMD $WGET_PARAMS "$_file" "$1"
+    if [ $? -ne 0 ]; then
+        echo "Connection error (${1})" >&2
+        exit 1
+    fi
+    echo "Downloading ${1}"
+}
+
+BackupFile() {
+    [ -e "$1" ] && cp -f "$1" "${1}.bak.`date +%s`"
+}
+
+BackupCurrentConfig() {
+    local _file
+    MakeDir "$BACKUP_DIR"
+    for _file in "$FILE_CONFIG" "$FILE_FQDN_FILTER" "$FILE_IP_FILTER" "$FILE_USER_ENTRIES" "$FILE_UCI_CONFIG" "$FILE_TORRC"
+    do
+        [ -e "$_file" ] && cp -f "$_file" "${BACKUP_DIR}/`basename ${_file}`"
+    done
+}
+
+RunAtStartup() {
+    $FILE_INIT_SCRIPT enable
+}
+
+AppStop() {
+    FileExists "$FILE_MAIN_SCRIPT" && $FILE_MAIN_SCRIPT destroy
+}
+
+AppStart() {
+    modprobe ip_set > /dev/null
+    modprobe ip_set_hash_ip > /dev/null
+    modprobe ip_set_hash_net > /dev/null
+    modprobe ip_set_list_set > /dev/null
+    modprobe xt_set > /dev/null
+    $FILE_INIT_SCRIPT start
+}
+
+SetCronTask() {
+    echo "0 3 */3 * * ${FILE_MAIN_SCRIPT} update" >> /etc/crontabs/root
+    /etc/init.d/cron restart 2> /dev/null
+    /etc/init.d/cron enable
+}
+
+Reboot() {
+    reboot
+}
+
+UpdatePackagesList() {
+    $OPKG_CMD update
+}
+
+InstallPackages() {
+    local _pkg
+    for _pkg in $@
+    do
+        if [ -z "`$OPKG_CMD list-installed $_pkg`" ]; then
+            $OPKG_CMD --force-overwrite install $_pkg
+            if [ $? -ne 0 ]; then
+                echo "Error during installation of the package (${_pkg})" >&2
+                exit 1
+            fi
+        fi
+    done
+}
+
+InstallBaseConfig() {
+    _return_code=1
+    InstallPackages "ipset" "kmod-ipt-ipset" "dnsmasq-full"
+    RemoveFile "$FILE_RUAB_PKG" > /dev/null
+    DlFile "$URL_RUAB_PKG" "$FILE_RUAB_PKG" && $OPKG_CMD install "$FILE_RUAB_PKG" > /dev/null
+    _return_code=$?
+    AppStop
+    return $_return_code
+}
+
+EnableBlacklist() {
+    $UCI_CMD set ruantiblock.config.bllist_preset="ruantiblock-fqdn"
+    $UCI_CMD commit ruantiblock
+}
+
+InstallVPNConfig() {
+    local _if_vpn
+    $UCI_CMD set ruantiblock.config.proxy_mode="2"
+    $UCI_CMD set ruantiblock.config.if_vpn="tun0"
+    $UCI_CMD commit ruantiblock
+}
+
+InstallTPConfig() {
+    local _if_vpn
+    $UCI_CMD set ruantiblock.config.proxy_mode="3"
+    $UCI_CMD commit ruantiblock
+}
+
+TorrcSettings() {
+    local _lan_ip=`$UCI_CMD get network.lan.ipaddr | $AWK_CMD -F "/" '{print $1}'`
+    if [ -z "$_lan_ip" ]; then
+        _lan_ip="0.0.0.0"
+    fi
+    $AWK_CMD -v lan_ip="$_lan_ip" -v TOR_USER="$TOR_USER" '{
+            if($0 ~ /^([#]?TransPort|[#]?TransListenAddress|[#]?SOCKSPort)/ && $0 !~ "127.0.0.1") sub(/([0-9]{1,3}.){3}[0-9]{1,3}/, lan_ip, $0);
+            else if($0 ~ /^User/) $2 = TOR_USER;
+            print $0;
+        }' "$FILE_TORRC" > "${FILE_TORRC}.tmp" && mv -f "${FILE_TORRC}.tmp" "$FILE_TORRC"
+}
+
+InstallTorConfig() {
+    InstallPackages "tor" "tor-geoip"
+    BackupFile "$FILE_TORRC"
+    DlFile "$URL_TORRC" "$FILE_TORRC"
+    TorrcSettings
+    $UCI_CMD set ruantiblock.config.proxy_mode="1"
+    $UCI_CMD commit ruantiblock
+    $UCI_CMD set dhcp.@dnsmasq[0].rebind_domain='onion'
+    $UCI_CMD commit dhcp
+}
+
+InstallLuaModule() {
+    InstallPackages "lua" "luasocket" "luasec" "luabitop"
+    RemoveFile "$FILE_MOD_LUA_PKG" > /dev/null
+    DlFile "$URL_MOD_LUA_PKG" "$FILE_MOD_LUA_PKG" && $OPKG_CMD install "$FILE_MOD_LUA_PKG"
+    FileExists "$FILE_LUA_IPTOOL" || DlFile "$URL_LUA_IPTOOL" "$FILE_LUA_IPTOOL"
+    FileExists "$FILE_LUA_IDN" || DlFile "$URL_LUA_IDN" "$FILE_LUA_IDN"
+    $UCI_CMD set ruantiblock.config.bllist_module="/usr/libexec/ruantiblock/ruab_parser.lua"
+    $UCI_CMD commit ruantiblock
+}
+
+InstallLuciApp() {
+    RemoveFile "$FILE_LUCI_APP_PKG" > /dev/null
+    RemoveFile "$FILE_LUCI_APP_RU_PKG" > /dev/null
+    DlFile "$URL_LUCI_APP_PKG" "$FILE_LUCI_APP_PKG" && $OPKG_CMD install "$FILE_LUCI_APP_PKG" && \
+    DlFile "$URL_LUCI_APP_RU_PKG" "$FILE_LUCI_APP_RU_PKG" && $OPKG_CMD install "$FILE_LUCI_APP_RU_PKG"
+    rm -f /tmp/luci-modulecache/* /tmp/luci-indexcache*
+    /etc/init.d/rpcd restart
+    /etc/init.d/uhttpd restart
+}
+
+PrintBold() {
+    printf "\033[1m - ${1}\033[0m\n"
+}
+
+InputError () {
+    printf "\033[1;31m Wrong input! Try again...\033[m\n"; $1
+}
+
+ConfirmProxyMode() {
+    local _reply
+    printf " Select configuration [ 1: Tor | 2: VPN | 3: Transparent proxy ] (default: 1, quit: q) > "
+    read _reply
+    case $_reply in
+        1|"")
+            PROXY_MODE=1
+            break
+        ;;
+        2)
+            PROXY_MODE=2
+            break
+        ;;
+        3)
+            PROXY_MODE=3
+            break
+        ;;
+        q|Q)
+            printf "Bye...\n"; exit 0
+        ;;
+        *)
+            InputError ConfirmProxyMode
+        ;;
+    esac
+}
+
+ConfirmBlacklist() {
+    local _reply
+    printf " Select blacklist [ 1: User entries only | 2: RKN blacklist ] (default: 1, quit: q) > "
+    read _reply
+    case $_reply in
+        1|"")
+            BLACKLIST=1
+            break
+        ;;
+        2)
+            BLACKLIST=2
+            break
+        ;;
+        q|Q)
+            printf "Bye...\n"; exit 0
+        ;;
+        *)
+            InputError ConfirmBlacklist
+        ;;
+    esac
+}
+
+ConfirmLuaModule() {
+    local _reply
+    printf " Would you like to install the lua module? [ y | n ] (default: y, quit: q) > "
+    read _reply
+    case $_reply in
+        y|Y|"")
+            LUA_MODULE=1
+            break
+        ;;
+        n|N)
+            LUA_MODULE=0
+            break
+        ;;
+        q|Q)
+            printf "Bye...\n"; exit 0
+        ;;
+        *)
+            InputError ConfirmLuaModule
+        ;;
+    esac
+}
+
+ConfirmLuciApp() {
+    local _reply
+    printf " Would you like to install the LuCI application? [ y | n ] (default: y, quit: q) > "
+    read _reply
+    case $_reply in
+        y|Y|"")
+            LUCI_APP=1
+            break
+        ;;
+        n|N)
+            LUCI_APP=0
+            break
+        ;;
+        q|Q)
+            printf "Bye...\n"; exit 0
+        ;;
+        *)
+            InputError ConfirmLuciApp
+        ;;
+    esac
+}
+
+ConfirmProcessing() {
+    local _reply
+    printf " Next, the installation will begin... Continue? [ y | n ] (default: y, quit: q) > "
+    read _reply
+    case $_reply in
+        y|Y|"")
+            break
+        ;;
+        n|N|q|Q)
+            printf "Bye...\n"; exit 0
+        ;;
+        *)
+            InputError ConfirmLuciApp
+        ;;
+    esac
+}
+
 check_repo() {
     printf "\033[32;1mChecking OpenWrt repo availability...\033[0m\n"
     opkg update | grep -q "Failed to download" && printf "\033[32;1mopkg failed. Check internet or date. Command for force ntp sync: ntpd -p ptbtime1.ptb.de\033[0m\n" && exit 1
 }
 
-route_vpn () {
-    if [ "$TUNNEL" == wg ]; then
-cat << EOF > /etc/hotplug.d/iface/30-vpnroute
-#!/bin/sh
-
-ip route add table vpn default dev wg0
-EOF
-    elif [ "$TUNNEL" == awg ]; then
-cat << EOF > /etc/hotplug.d/iface/30-vpnroute
-#!/bin/sh
-
-ip route add table vpn default dev awg0
-EOF
-    elif [ "$TUNNEL" == singbox ] || [ "$TUNNEL" == ovpn ] || [ "$TUNNEL" == tun2socks ]; then
-cat << EOF > /etc/hotplug.d/iface/30-vpnroute
-#!/bin/sh
-
-sleep 10
-ip route add table vpn default dev tun0
-EOF
+add_packages() {
+    if opkg list-installed | grep -q "curl -"; then
+        printf "\033[32;1mCurl already installed\033[0m\n"
+    else
+        printf "\033[32;1mInstalling curl\033[0m\n"
+        InstallPackages "curl"
     fi
 
-    cp /etc/hotplug.d/iface/30-vpnroute /etc/hotplug.d/net/30-vpnroute
-}
-
-add_mark() {
-    grep -q "99 vpn" /etc/iproute2/rt_tables || echo '99 vpn' >> /etc/iproute2/rt_tables
-    
-    if ! uci show network | grep -q mark0x1; then
-        printf "\033[32;1mConfigure mark rule\033[0m\n"
-        uci add network rule
-        uci set network.@rule[-1].name='mark0x1'
-        uci set network.@rule[-1].mark='0x1'
-        uci set network.@rule[-1].priority='100'
-        uci set network.@rule[-1].lookup='vpn'
-        uci commit
+    if opkg list-installed | grep -q nano; then
+        printf "\033[32;1mNano already installed\033[0m\n"
+    else
+        printf "\033[32;1mInstalling nano\033[0m\n"
+        InstallPackages "nano"
     fi
 }
 
-add_tunnel() {
-    echo "We can automatically configure only Wireguard and Amnezia WireGuard. OpenVPN, Sing-box(Shadowsocks2022, VMess, VLESS, etc) and tun2socks will need to be configured manually"
-    echo "Select a tunnel:"
-    echo "1) WireGuard"
-    echo "2) OpenVPN"
-    echo "3) Sing-box"
-    echo "4) tun2socks"
-    echo "5) wgForYoutube"
-    echo "6) Amnezia WireGuard"
-    echo "7) Amnezia WireGuard For Youtube"
-    echo "8) Skip this step"
+dnsmasqfull() {
+    if opkg list-installed | grep -q dnsmasq-full; then
+        printf "\033[32;1mdnsmasq-full already installed\033[0m\n"
+    else
+        printf "\033[32;1mInstalling dnsmasq-full\033[0m\n"
+        cd /tmp/ && opkg download dnsmasq-full
+        opkg remove dnsmasq && opkg install dnsmasq-full --cache /tmp/
+
+        [ -f /etc/config/dhcp-opkg ] && cp /etc/config/dhcp /etc/config/dhcp-old && mv /etc/config/dhcp-opkg /etc/config/dhcp
+fi
+}
+
+add_dns_resolver() {
+    echo "Configure DNSCrypt2 or Stubby? It does matter if your ISP is spoofing DNS requests"
+    DISK=$(df -m / | awk 'NR==2{ print $2 }')
+    if [[ "$DISK" -lt 32 ]]; then 
+        printf "\033[31;1mYour router a disk have less than 32MB. It is not recommended to install DNSCrypt, it takes 10MB\033[0m\n"
+    fi
+    echo "Select:"
+    echo "1) Stubby (36K)"
+	echo "2) DNSCrypt2 (10.7M)"
+    echo "3) No [Default]"
 
     while true; do
-    read -r -p '' TUNNEL
-        case $TUNNEL in 
+    read -r -p '' DNS_RESOLVER
+        case $DNS_RESOLVER in 
 
         1) 
-            TUNNEL=wg
-            break
+            DNS_RESOLVER=STUBBY
+			break
             ;;
 
         2)
-            TUNNEL=ovpn
+            DNS_RESOLVER=DNSCRYPT
             break
             ;;
 
         3) 
-            TUNNEL=singbox
-            break
-            ;;
-
-        4) 
-            TUNNEL=tun2socks
-            break
-            ;;
-
-        5) 
-            TUNNEL=wgForYoutube
-            break
-            ;;
-
-        6) 
-            TUNNEL=awg
-            break
-            ;;
-
-        7) 
-            TUNNEL=awgForYoutube
-            break
-            ;;
-
-        8)
-            echo "Skip"
-            TUNNEL=0
+            echo "Skiped"
             break
             ;;
 
@@ -109,13 +431,165 @@ add_tunnel() {
         esac
     done
 
-    if [ "$TUNNEL" == 'wg' ]; then
+    if [ "$DNS_RESOLVER" == 'DNSCRYPT' ]; then
+        if opkg list-installed | grep -q dnscrypt-proxy2; then
+            printf "\033[32;1mDNSCrypt2 already installed\033[0m\n"
+        else
+            printf "\033[32;1mInstalled dnscrypt-proxy2\033[0m\n"
+            InstallPackages "dnscrypt-proxy2"
+            if grep -q "# server_names" /etc/dnscrypt-proxy2/dnscrypt-proxy.toml; then
+                sed -i "s/^# server_names =.*/server_names = [\'google\', \'cloudflare\', \'scaleway-fr\', \'yandex\']/g" /etc/dnscrypt-proxy2/dnscrypt-proxy.toml
+            fi
+
+            printf "\033[32;1mDNSCrypt restart\033[0m\n"
+            service dnscrypt-proxy restart
+            printf "\033[32;1mDNSCrypt needs to load the relays list. Please wait\033[0m\n"
+            sleep 30
+
+            if [ -f /etc/dnscrypt-proxy2/relays.md ]; then
+                uci set dhcp.@dnsmasq[0].noresolv="1"
+                uci -q delete dhcp.@dnsmasq[0].server
+                uci add_list dhcp.@dnsmasq[0].server="127.0.0.53#53"
+                uci add_list dhcp.@dnsmasq[0].server='/use-application-dns.net/'
+                uci commit dhcp
+                
+                printf "\033[32;1mDnsmasq restart\033[0m\n"
+
+                /etc/init.d/dnsmasq restart
+            else
+                printf "\033[31;1mDNSCrypt not download list on /etc/dnscrypt-proxy2. Repeat install DNSCrypt by script.\033[0m\n"
+            fi
+    fi
+
+    fi
+
+    if [ "$DNS_RESOLVER" == 'STUBBY' ]; then
+        printf "\033[32;1mConfigure Stubby\033[0m\n"
+
+        if opkg list-installed | grep -q stubby; then
+            printf "\033[32;1mStubby already installed\033[0m\n"
+        else
+            printf "\033[32;1mInstalled stubby\033[0m\n"
+            InstallPackages "stubby"
+
+            printf "\033[32;1mConfigure Dnsmasq for Stubby\033[0m\n"
+            uci set dhcp.@dnsmasq[0].noresolv="1"
+            uci -q delete dhcp.@dnsmasq[0].server
+            uci add_list dhcp.@dnsmasq[0].server="127.0.0.1#5453"
+            uci add_list dhcp.@dnsmasq[0].server='/use-application-dns.net/'
+            uci commit dhcp
+
+            printf "\033[32;1mDnsmasq restart\033[0m\n"
+
+            /etc/init.d/dnsmasq restart
+        fi
+    fi
+}
+
+add_tunnel() {
+    echo "We can automatically configure only Wireguard and Amnezia WireGuard. OpenVPN, Sing-box(Shadowsocks2022, VMess, VLESS, etc) and tun2socks will need to be configured manually"
+    echo "Select a tunnel:"
+    echo "1) Tor" 						#ruantiblock
+	echo "2) OpenVPN" 					#ruantiblock
+ 	echo "3) WireGuard" 				#ruantiblock
+    echo "4) Amnezia WireGuard" 		#ruantiblock
+    echo "5) Transparent proxy" 		#ruantiblock
+    echo "6) WireGuard For YouTube"
+    echo "7) Amnezia WireGuard For YouTube"
+    echo "8) Sing-box"
+    echo "9) Tun2Socks"
+	echo "0) Skip this step"
+
+    while true; do
+    read -r -p '' TUNNEL
+        case $TUNNEL in 
+
+        1) 
+            TUNNEL=tor
+			PROXY_MODE=1
+            break
+            ;;
+
+        2)
+            TUNNEL=ovpn
+			PROXY_MODE=2
+            break
+            ;;
+
+		3) 
+            TUNNEL=wg
+			PROXY_MODE=2
+            break
+            ;;
+        
+		4) 
+            TUNNEL=awg
+			PROXY_MODE=2
+            break
+            ;;
+
+        5) 
+            TUNNEL=0
+            PROXY_MODE=3
+			break
+            ;;
+
+        6) 
+            TUNNEL=wgForYoutube
+            PROXY_MODE=1
+			break
+			;;
+
+        7) 
+            TUNNEL=awgForYoutube
+			PROXY_MODE=1
+            break
+            ;;
+
+        8) 
+            TUNNEL=singbox
+			PROXY_MODE=1
+            break
+            ;;
+		
+		9) 
+            TUNNEL=tun2socks
+			PROXY_MODE=1
+            break
+            ;;	
+
+        0)
+            echo "Skip"
+            TUNNEL=0
+			PROXY_MODE=1
+            break
+            ;;
+
+        *)
+            echo "Choose from the following options"
+            ;;
+        esac
+    done
+
+    if [ "$TUNNEL" == 'tor' ]; then
+		printf "\033[32;1mConfigure Tor Configuration.\033[0m\n"
+        if opkg list-installed | grep -q tor; then
+            echo "Tor already installed"
+        else
+            echo "Installing Tor configuration."
+            InstallTorConfig
+		fi	
+        if `/etc/init.d/tor enabled`; then
+            /etc/init.d/tor restart
+    fi
+		
+	if [ "$TUNNEL" == 'wg' ]; then
         printf "\033[32;1mConfigure WireGuard\033[0m\n"
         if opkg list-installed | grep -q wireguard-tools; then
             echo "Wireguard already installed"
         else
-            echo "Installed wg..."
-            opkg install wireguard-tools
+            echo "Installing WireGuard."
+			InstallPackages "wireguard-tools"
         fi
 
         route_vpn
@@ -166,8 +640,8 @@ add_tunnel() {
         if opkg list-installed | grep -q openvpn-openssl; then
             echo "OpenVPN already installed"
         else
-            echo "Installed openvpn"
-            opkg install openvpn-openssl
+            echo "Installing openvpn"
+            InstallPackages "openvpn-openssl"
         fi
         printf "\033[32;1mConfigure route for OpenVPN\033[0m\n"
         route_vpn
@@ -179,8 +653,8 @@ add_tunnel() {
         else
             AVAILABLE_SPACE=$(df / | awk 'NR>1 { print $4 }')
             if  [[ "$AVAILABLE_SPACE" -gt 2000 ]]; then
-                echo "Installed sing-box"
-                opkg install sing-box
+                echo "Installing sing-box"
+                InstallPackages "sing-box"
             else
                 printf "\033[31;1mNo free space for a sing-box. Sing-box is not installed.\033[0m\n"
                 exit 1
@@ -314,363 +788,29 @@ EOF
 
 }
 
-dnsmasqfull() {
-    if opkg list-installed | grep -q dnsmasq-full; then
-        printf "\033[32;1mdnsmasq-full already installed\033[0m\n"
-    else
-        printf "\033[32;1mInstalled dnsmasq-full\033[0m\n"
-        cd /tmp/ && opkg download dnsmasq-full
-        opkg remove dnsmasq && opkg install dnsmasq-full --cache /tmp/
+route_vpn () {
+    if [ "$TUNNEL" == wg ]; then
+cat << EOF > /etc/hotplug.d/iface/30-vpnroute
+#!/bin/sh
 
-        [ -f /etc/config/dhcp-opkg ] && cp /etc/config/dhcp /etc/config/dhcp-old && mv /etc/config/dhcp-opkg /etc/config/dhcp
-fi
-}
-
-remove_forwarding() {
-    if [ ! -z "$forward_id" ]; then
-        while uci -q delete firewall.@forwarding[$forward_id]; do :; done
-    fi
-}
-
-add_zone() {
-    if  [ "$TUNNEL" == 0 ]; then
-        printf "\033[32;1mZone setting skipped\033[0m\n"
-    elif uci show firewall | grep -q "@zone.*name='$TUNNEL'"; then
-        printf "\033[32;1mZone already exist\033[0m\n"
-    else
-        printf "\033[32;1mCreate zone\033[0m\n"
-
-        # Delete exists zone
-        zone_tun_id=$(uci show firewall | grep -E '@zone.*tun0' | awk -F '[][{}]' '{print $2}' | head -n 1)
-        if [ "$zone_tun_id" == 0 ] || [ "$zone_tun_id" == 1 ]; then
-            printf "\033[32;1mtun0 zone has an identifier of 0 or 1. That's not ok. Fix your firewall. lan and wan zones should have identifiers 0 and 1. \033[0m\n"
-            exit 1
-        fi
-        if [ ! -z "$zone_tun_id" ]; then
-            while uci -q delete firewall.@zone[$zone_tun_id]; do :; done
-        fi
-
-        zone_wg_id=$(uci show firewall | grep -E '@zone.*wg0' | awk -F '[][{}]' '{print $2}' | head -n 1)
-        if [ "$zone_wg_id" == 0 ] || [ "$zone_wg_id" == 1 ]; then
-            printf "\033[32;1mwg0 zone has an identifier of 0 or 1. That's not ok. Fix your firewall. lan and wan zones should have identifiers 0 and 1. \033[0m\n"
-            exit 1
-        fi
-        if [ ! -z "$zone_wg_id" ]; then
-            while uci -q delete firewall.@zone[$zone_wg_id]; do :; done
-        fi
-
-        zone_awg_id=$(uci show firewall | grep -E '@zone.*awg0' | awk -F '[][{}]' '{print $2}' | head -n 1)
-        if [ "$zone_awg_id" == 0 ] || [ "$zone_awg_id" == 1 ]; then
-            printf "\033[32;1mawg0 zone has an identifier of 0 or 1. That's not ok. Fix your firewall. lan and wan zones should have identifiers 0 and 1. \033[0m\n"
-            exit 1
-        fi
-        if [ ! -z "$zone_awg_id" ]; then
-            while uci -q delete firewall.@zone[$zone_awg_id]; do :; done
-        fi
-
-        uci add firewall zone
-        uci set firewall.@zone[-1].name="$TUNNEL"
-        if [ "$TUNNEL" == wg ]; then
-            uci set firewall.@zone[-1].network='wg0'
-        elif [ "$TUNNEL" == awg ]; then
-            uci set firewall.@zone[-1].network='awg0'
-        elif [ "$TUNNEL" == singbox ] || [ "$TUNNEL" == ovpn ] || [ "$TUNNEL" == tun2socks ]; then
-            uci set firewall.@zone[-1].device='tun0'
-        fi
-        if [ "$TUNNEL" == wg ] || [ "$TUNNEL" == awg ] || [ "$TUNNEL" == ovpn ] || [ "$TUNNEL" == tun2socks ]; then
-            uci set firewall.@zone[-1].forward='REJECT'
-            uci set firewall.@zone[-1].output='ACCEPT'
-            uci set firewall.@zone[-1].input='REJECT'
-        elif [ "$TUNNEL" == singbox ]; then
-            uci set firewall.@zone[-1].forward='ACCEPT'
-            uci set firewall.@zone[-1].output='ACCEPT'
-            uci set firewall.@zone[-1].input='ACCEPT'
-        fi
-        uci set firewall.@zone[-1].masq='1'
-        uci set firewall.@zone[-1].mtu_fix='1'
-        uci set firewall.@zone[-1].family='ipv4'
-        uci commit firewall
-    fi
-    
-    if [ "$TUNNEL" == 0 ]; then
-        printf "\033[32;1mForwarding setting skipped\033[0m\n"
-    elif uci show firewall | grep -q "@forwarding.*name='$TUNNEL-lan'"; then
-        printf "\033[32;1mForwarding already configured\033[0m\n"
-    else
-        printf "\033[32;1mConfigured forwarding\033[0m\n"
-        # Delete exists forwarding
-        if [[ $TUNNEL != "wg" ]]; then
-            forward_id=$(uci show firewall | grep -E "@forwarding.*dest='wg'" | awk -F '[][{}]' '{print $2}' | head -n 1)
-            remove_forwarding
-        fi
-
-        if [[ $TUNNEL != "awg" ]]; then
-            forward_id=$(uci show firewall | grep -E "@forwarding.*dest='awg'" | awk -F '[][{}]' '{print $2}' | head -n 1)
-            remove_forwarding
-        fi
-
-        if [[ $TUNNEL != "ovpn" ]]; then
-            forward_id=$(uci show firewall | grep -E "@forwarding.*dest='ovpn'" | awk -F '[][{}]' '{print $2}' | head -n 1)
-            remove_forwarding
-        fi
-
-        if [[ $TUNNEL != "singbox" ]]; then
-            forward_id=$(uci show firewall | grep -E "@forwarding.*dest='singbox'" | awk -F '[][{}]' '{print $2}' | head -n 1)
-            remove_forwarding
-        fi
-
-        if [[ $TUNNEL != "tun2socks" ]]; then
-            forward_id=$(uci show firewall | grep -E "@forwarding.*dest='tun2socks'" | awk -F '[][{}]' '{print $2}' | head -n 1)
-            remove_forwarding
-        fi
-
-        uci add firewall forwarding
-        uci set firewall.@forwarding[-1]=forwarding
-        uci set firewall.@forwarding[-1].name="$TUNNEL-lan"
-        uci set firewall.@forwarding[-1].dest="$TUNNEL"
-        uci set firewall.@forwarding[-1].src='lan'
-        uci set firewall.@forwarding[-1].family='ipv4'
-        uci commit firewall
-    fi
-}
-
-show_manual() {
-    if [ "$TUNNEL" == tun2socks ]; then
-        printf "\033[42;1mZone for tun2socks cofigured. But you need to set up the tunnel yourself.\033[0m\n"
-        echo "Use this manual: https://cli.co/VNZISEM"
-    elif [ "$TUNNEL" == ovpn ]; then
-        printf "\033[42;1mZone for OpenVPN cofigured. But you need to set up the tunnel yourself.\033[0m\n"
-        echo "Use this manual: https://itdog.info/nastrojka-klienta-openvpn-na-openwrt/"
-    fi
-}
-
-add_set() {
-    if uci show firewall | grep -q "@ipset.*name='vpn_domains'"; then
-        printf "\033[32;1mSet already exist\033[0m\n"
-    else
-        printf "\033[32;1mCreate set\033[0m\n"
-        uci add firewall ipset
-        uci set firewall.@ipset[-1].name='vpn_domains'
-        uci set firewall.@ipset[-1].match='dst_net'
-        uci commit
-    fi
-    if uci show firewall | grep -q "@rule.*name='mark_domains'"; then
-        printf "\033[32;1mRule for set already exist\033[0m\n"
-    else
-        printf "\033[32;1mCreate rule set\033[0m\n"
-        uci add firewall rule
-        uci set firewall.@rule[-1]=rule
-        uci set firewall.@rule[-1].name='mark_domains'
-        uci set firewall.@rule[-1].src='lan'
-        uci set firewall.@rule[-1].dest='*'
-        uci set firewall.@rule[-1].proto='all'
-        uci set firewall.@rule[-1].ipset='vpn_domains'
-        uci set firewall.@rule[-1].set_mark='0x1'
-        uci set firewall.@rule[-1].target='MARK'
-        uci set firewall.@rule[-1].family='ipv4'
-        uci commit
-    fi
-}
-
-add_dns_resolver() {
-    echo "Configure DNSCrypt2 or Stubby? It does matter if your ISP is spoofing DNS requests"
-    DISK=$(df -m / | awk 'NR==2{ print $2 }')
-    if [[ "$DISK" -lt 32 ]]; then 
-        printf "\033[31;1mYour router a disk have less than 32MB. It is not recommended to install DNSCrypt, it takes 10MB\033[0m\n"
-    fi
-    echo "Select:"
-    echo "1) No [Default]"
-    echo "2) DNSCrypt2 (10.7M)"
-    echo "3) Stubby (36K)"
-
-    while true; do
-    read -r -p '' DNS_RESOLVER
-        case $DNS_RESOLVER in 
-
-        1) 
-            echo "Skiped"
-            break
-            ;;
-
-        2)
-            DNS_RESOLVER=DNSCRYPT
-            break
-            ;;
-
-        3) 
-            DNS_RESOLVER=STUBBY
-            break
-            ;;
-
-        *)
-            echo "Choose from the following options"
-            ;;
-        esac
-    done
-
-    if [ "$DNS_RESOLVER" == 'DNSCRYPT' ]; then
-        if opkg list-installed | grep -q dnscrypt-proxy2; then
-            printf "\033[32;1mDNSCrypt2 already installed\033[0m\n"
-        else
-            printf "\033[32;1mInstalled dnscrypt-proxy2\033[0m\n"
-            opkg install dnscrypt-proxy2
-            if grep -q "# server_names" /etc/dnscrypt-proxy2/dnscrypt-proxy.toml; then
-                sed -i "s/^# server_names =.*/server_names = [\'google\', \'cloudflare\', \'scaleway-fr\', \'yandex\']/g" /etc/dnscrypt-proxy2/dnscrypt-proxy.toml
-            fi
-
-            printf "\033[32;1mDNSCrypt restart\033[0m\n"
-            service dnscrypt-proxy restart
-            printf "\033[32;1mDNSCrypt needs to load the relays list. Please wait\033[0m\n"
-            sleep 30
-
-            if [ -f /etc/dnscrypt-proxy2/relays.md ]; then
-                uci set dhcp.@dnsmasq[0].noresolv="1"
-                uci -q delete dhcp.@dnsmasq[0].server
-                uci add_list dhcp.@dnsmasq[0].server="127.0.0.53#53"
-                uci add_list dhcp.@dnsmasq[0].server='/use-application-dns.net/'
-                uci commit dhcp
-                
-                printf "\033[32;1mDnsmasq restart\033[0m\n"
-
-                /etc/init.d/dnsmasq restart
-            else
-                printf "\033[31;1mDNSCrypt not download list on /etc/dnscrypt-proxy2. Repeat install DNSCrypt by script.\033[0m\n"
-            fi
-    fi
-
-    fi
-
-    if [ "$DNS_RESOLVER" == 'STUBBY' ]; then
-        printf "\033[32;1mConfigure Stubby\033[0m\n"
-
-        if opkg list-installed | grep -q stubby; then
-            printf "\033[32;1mStubby already installed\033[0m\n"
-        else
-            printf "\033[32;1mInstalled stubby\033[0m\n"
-            opkg install stubby
-
-            printf "\033[32;1mConfigure Dnsmasq for Stubby\033[0m\n"
-            uci set dhcp.@dnsmasq[0].noresolv="1"
-            uci -q delete dhcp.@dnsmasq[0].server
-            uci add_list dhcp.@dnsmasq[0].server="127.0.0.1#5453"
-            uci add_list dhcp.@dnsmasq[0].server='/use-application-dns.net/'
-            uci commit dhcp
-
-            printf "\033[32;1mDnsmasq restart\033[0m\n"
-
-            /etc/init.d/dnsmasq restart
-        fi
-    fi
-}
-
-add_packages() {
-    if opkg list-installed | grep -q "curl -"; then
-        printf "\033[32;1mCurl already installed\033[0m\n"
-    else
-        printf "\033[32;1mInstall curl\033[0m\n"
-        opkg install curl
-    fi
-
-    if opkg list-installed | grep -q nano; then
-        printf "\033[32;1mNano already installed\033[0m\n"
-    else
-        printf "\033[32;1mInstall nano\033[0m\n"
-        opkg install nano
-    fi
-}
-
-add_getdomains() {
-    echo "Choose you country"
-    echo "Select:"
-    echo "1) Russia inside. You are inside Russia"
-    echo "2) Russia outside. You are outside of Russia, but you need access to Russian resources"
-    echo "3) Ukraine. uablacklist.net list"
-    echo "4) Skip script creation"
-
-    while true; do
-    read -r -p '' COUNTRY
-        case $COUNTRY in 
-
-        1) 
-            COUNTRY=russia_inside
-            break
-            ;;
-
-        2)
-            COUNTRY=russia_outside
-            break
-            ;;
-
-        3) 
-            COUNTRY=ukraine
-            break
-            ;;
-
-        4) 
-            echo "Skiped"
-            COUNTRY=0
-            break
-            ;;
-
-        *)
-            echo "Choose from the following options"
-            ;;
-        esac
-    done
-
-    if [ "$COUNTRY" == 'russia_inside' ]; then
-        EOF_DOMAINS=DOMAINS=https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/inside-dnsmasq-nfset.lst
-    elif [ "$COUNTRY" == 'russia_outside' ]; then
-        EOF_DOMAINS=DOMAINS=https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/outside-dnsmasq-nfset.lst
-    elif [ "$COUNTRY" == 'ukraine' ]; then
-        EOF_DOMAINS=DOMAINS=https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Ukraine/inside-dnsmasq-nfset.lst
-    fi
-
-    if [ "$COUNTRY" != '0' ]; then
-        printf "\033[32;1mCreate script /etc/init.d/getdomains\033[0m\n"
-
-cat << EOF > /etc/init.d/getdomains
-#!/bin/sh /etc/rc.common
-
-START=99
-
-start () {
-    $EOF_DOMAINS
+ip route add table vpn default dev wg0
 EOF
-cat << 'EOF' >> /etc/init.d/getdomains
-    count=0
-    while true; do
-        if curl -m 3 github.com; then
-            curl -f $DOMAINS --output /tmp/dnsmasq.d/domains.lst
-            break
-        else
-            echo "GitHub is not available. Check the internet availability [$count]"
-            count=$((count+1))
-        fi
-    done
+    elif [ "$TUNNEL" == awg ]; then
+cat << EOF > /etc/hotplug.d/iface/30-vpnroute
+#!/bin/sh
 
-    if dnsmasq --conf-file=/tmp/dnsmasq.d/domains.lst --test 2>&1 | grep -q "syntax check OK"; then
-        /etc/init.d/dnsmasq restart
-    fi
-}
+ip route add table vpn default dev awg0
 EOF
+    elif [ "$TUNNEL" == singbox ] || [ "$TUNNEL" == ovpn ] || [ "$TUNNEL" == tun2socks ]; then
+cat << EOF > /etc/hotplug.d/iface/30-vpnroute
+#!/bin/sh
 
-        chmod +x /etc/init.d/getdomains
-        /etc/init.d/getdomains enable
-
-        if crontab -l | grep -q /etc/init.d/getdomains; then
-            printf "\033[32;1mCrontab already configured\033[0m\n"
-
-        else
-            crontab -l | { cat; echo "0 */8 * * * /etc/init.d/getdomains start"; } | crontab -
-            printf "\033[32;1mIgnore this error. This is normal for a new installation\033[0m\n"
-            /etc/init.d/cron restart
-        fi
-
-        printf "\033[32;1mStart script\033[0m\n"
-
-        /etc/init.d/getdomains start
+sleep 10
+ip route add table vpn default dev tun0
+EOF
     fi
+
+    cp /etc/hotplug.d/iface/30-vpnroute /etc/hotplug.d/net/30-vpnroute
 }
 
 add_internal_wg() {
@@ -870,7 +1010,7 @@ install_awg_packages() {
     SUBTARGET=$(ubus call system board | jsonfilter -e '@.release.target' | cut -d '/' -f 2)
     VERSION=$(ubus call system board | jsonfilter -e '@.release.version')
     PKGPOSTFIX="_v${VERSION}_${PKGARCH}_${TARGET}_${SUBTARGET}.ipk"
-    BASE_URL="https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/"
+    MAIN_URL="https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/"
 
     AWG_DIR="/tmp/amneziawg"
     mkdir -p "$AWG_DIR"
@@ -879,7 +1019,7 @@ install_awg_packages() {
         echo "amneziawg-tools already installed"
     else
         AMNEZIAWG_TOOLS_FILENAME="amneziawg-tools${PKGPOSTFIX}"
-        DOWNLOAD_URL="${BASE_URL}v${VERSION}/${AMNEZIAWG_TOOLS_FILENAME}"
+        DOWNLOAD_URL="${MAIN_URL}v${VERSION}/${AMNEZIAWG_TOOLS_FILENAME}"
         curl -L -o "$AWG_DIR/$AMNEZIAWG_TOOLS_FILENAME" "$DOWNLOAD_URL"
 
         if [ $? -eq 0 ]; then
@@ -903,7 +1043,7 @@ install_awg_packages() {
         echo "kmod-amneziawg already installed"
     else
         KMOD_AMNEZIAWG_FILENAME="kmod-amneziawg${PKGPOSTFIX}"
-        DOWNLOAD_URL="${BASE_URL}v${VERSION}/${KMOD_AMNEZIAWG_FILENAME}"
+        DOWNLOAD_URL="${MAIN_URL}v${VERSION}/${KMOD_AMNEZIAWG_FILENAME}"
         curl -L -o "$AWG_DIR/$KMOD_AMNEZIAWG_FILENAME" "$DOWNLOAD_URL"
 
         if [ $? -eq 0 ]; then
@@ -927,7 +1067,7 @@ install_awg_packages() {
         echo "luci-app-amneziawg already installed"
     else
         LUCI_APP_AMNEZIAWG_FILENAME="luci-app-amneziawg${PKGPOSTFIX}"
-        DOWNLOAD_URL="${BASE_URL}v${VERSION}/${LUCI_APP_AMNEZIAWG_FILENAME}"
+        DOWNLOAD_URL="${MAIN_URL}v${VERSION}/${LUCI_APP_AMNEZIAWG_FILENAME}"
         curl -L -o "$AWG_DIR/$LUCI_APP_AMNEZIAWG_FILENAME" "$DOWNLOAD_URL"
 
         if [ $? -eq 0 ]; then
@@ -978,15 +1118,7 @@ add_dns_resolver
 
 add_tunnel
 
-add_mark
 
-add_zone
-
-show_manual
-
-add_set
-
-add_getdomains
 
 printf "\033[32;1mRestart network\033[0m\n"
 /etc/init.d/network restart
