@@ -572,24 +572,26 @@ add_tunnel() {
     done
 
     if [ "$TUNNEL" == 'tor' ]; then
-		printf "\033[32;1mConfigure Tor Configuration.\033[0m\n"
+	printf "\033[32;1mConfigure Tor Configuration.\033[0m\n"
         if opkg list-installed | grep -q tor; then
-            echo "Tor already installed"
+	echo "Tor already installed"
         else
-            echo "Installing Tor configuration."
-            InstallTorConfig
+	echo "Installing Tor configuration."
+        InstallTorConfig
+	fi
 	if `/etc/init.d/tor enabled`; then
             /etc/init.d/tor restart
+	fi    
     fi
-		
-	if [ "$TUNNEL" == 'wg' ]; then
+    
+    if [ "$TUNNEL" == 'wg' ]; then
         printf "\033[32;1mConfigure WireGuard\033[0m\n"
         if opkg list-installed | grep -q wireguard-tools; then
             echo "Wireguard already installed"
         else
             echo "Installing WireGuard."
-			InstallPackages "wireguard-tools"
-        fi
+	    InstallPackages "wireguard-tools"
+     fi
 
         route_vpn
 
@@ -784,7 +786,6 @@ EOF
         uci set network.@amneziawg_awg0[0].endpoint_port=$AWG_ENDPOINT_PORT
         uci commit
     fi
-
 }
 
 route_vpn () {
