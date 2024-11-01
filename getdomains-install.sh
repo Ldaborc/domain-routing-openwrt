@@ -577,7 +577,8 @@ add_tunnel() {
             echo "Tor already installed"
         else
             echo "Installing Tor configuration."
-            InstallTorConfig	
+            InstallTorConfig
+			fi
         if `/etc/init.d/tor enabled`; then
             /etc/init.d/tor restart
     fi
@@ -783,6 +784,8 @@ EOF
         uci set network.@amneziawg_awg0[0].allowed_ips='0.0.0.0/0'
         uci set network.@amneziawg_awg0[0].endpoint_port=$AWG_ENDPOINT_PORT
         uci commit
+    fi
+
 }
 
 route_vpn () {
