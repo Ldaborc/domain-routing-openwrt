@@ -176,7 +176,7 @@ InstallPackages() {
 
 InstallBaseConfig() {
     _return_code=1
-    InstallPackages "ipset" "kmod-ipt-ipset" "dnsmasq-full"
+    InstallPackages "ipset" "kmod-ipt-ipset"
     RemoveFile "$FILE_RUAB_PKG" > /dev/null
     DlFile "$URL_RUAB_PKG" "$FILE_RUAB_PKG" && $OPKG_CMD install "$FILE_RUAB_PKG" > /dev/null
     _return_code=$?
@@ -489,9 +489,9 @@ add_dns_resolver() {
 add_tunnel() {
     echo "We can automatically configure only Wireguard and Amnezia WireGuard. OpenVPN, Sing-box(Shadowsocks2022, VMess, VLESS, etc) and tun2socks will need to be configured manually"
     echo "Select a tunnel:"
-    echo "1) Tor" 				#ruantiblock
-    echo "2) OpenVPN" 				#ruantiblock
-    echo "3) WireGuard" 			#ruantiblock
+    echo "1) Tor" 						#ruantiblock
+    echo "2) OpenVPN" 					#ruantiblock
+    echo "3) WireGuard" 				#ruantiblock
     echo "4) Amnezia WireGuard" 		#ruantiblock
     echo "5) Transparent proxy" 		#ruantiblock
     echo "6) WireGuard For YouTube"
@@ -504,68 +504,68 @@ add_tunnel() {
     read -r -p '' TUNNEL
         case $TUNNEL in 
 
-        1) 
-        TUNNEL=tor
-	PROXY_MODE=1
+    1) 
+		TUNNEL=tor
+		PROXY_MODE=1
         break
         ;;
 
-        2)
+    2)
         TUNNEL=ovpn
-	PROXY_MODE=2
+		PROXY_MODE=2
         break
         ;;
 
 	3) 
         TUNNEL=wg
-	PROXY_MODE=2
+		PROXY_MODE=2
         break
         ;;
         
 	4) 
         TUNNEL=awg
-	PROXY_MODE=2
+		PROXY_MODE=2
         break
         ;;
 
-        5) 
-        TUNNEL=0
+    5) 
+        TUNNEL=TProxy
         PROXY_MODE=3
-	break
+		break
         ;;
 
-        6) 
+    6) 
         TUNNEL=wgForYoutube
         PROXY_MODE=1
-	break
-	;;
+		break
+		;;
 
-        7) 
+    7) 
         TUNNEL=awgForYoutube
-	PROXY_MODE=1
+		PROXY_MODE=1
         break
         ;;
 
-        8) 
+    8) 
         TUNNEL=singbox
-	PROXY_MODE=1
+		PROXY_MODE=1
         break
         ;;
 		
 	9) 
         TUNNEL=tun2socks
-	PROXY_MODE=1
+		PROXY_MODE=1
         break
         ;;	
 
-        0)
+    0)
         echo "Skip"
         TUNNEL=0
-	PROXY_MODE=1
+		PROXY_MODE=1
         break
         ;;
 
-        *)
+    *)
         echo "Choose from the following options"
         ;;
         esac
@@ -581,7 +581,8 @@ add_tunnel() {
 	fi
 	if `/etc/init.d/tor enabled`; then
             /etc/init.d/tor restart
-	fi    
+	fi
+		ruantiblock
     fi
     
     if [ "$TUNNEL" == 'wg' ]; then
@@ -635,6 +636,7 @@ add_tunnel() {
         uci set network.@wireguard_wg0[0].allowed_ips='0.0.0.0/0'
         uci set network.@wireguard_wg0[0].endpoint_port=$WG_ENDPOINT_PORT
         uci commit
+		ruantiblock
     fi
 
     if [ "$TUNNEL" == 'ovpn' ]; then
@@ -646,6 +648,7 @@ add_tunnel() {
         fi
         printf "\033[32;1mConfigure route for OpenVPN\033[0m\n"
         route_vpn
+		ruantiblock
     fi
 
     if [ "$TUNNEL" == 'singbox' ]; then
@@ -716,6 +719,10 @@ EOF
     if [ "$TUNNEL" == 'awgForYoutube' ]; then
         add_internal_wg AmneziaWG
     fi
+	
+	if [ "$TUNNEL" == 'TProxy' ]; then
+        ruantiblock
+    fi
 
     if [ "$TUNNEL" == 'awg' ]; then
         printf "\033[32;1mConfigure Amnezia WireGuard\033[0m\n"
@@ -785,6 +792,7 @@ EOF
         uci set network.@amneziawg_awg0[0].allowed_ips='0.0.0.0/0'
         uci set network.@amneziawg_awg0[0].endpoint_port=$AWG_ENDPOINT_PORT
         uci commit
+		ruantiblock
     fi
 }
 
@@ -1090,6 +1098,57 @@ install_awg_packages() {
     rm -rf "$AWG_DIR"
 }
 
+ruantiblock () {
+ConfirmBlacklist
+#ConfirmLuaModule
+ConfirmLuciApp
+ConfirmProcessing
+AppStop
+PrintBold "Updating packages list..."
+UpdatePackagesList
+PrintBold "Saving current configuration..."
+PrintBold "Installing basic configuration..."
+InstallBaseConfig
+if [ $? -eq 0 ]; then
+
+    if [ $PROXY_MODE = 2 ]; then
+        PrintBold "Installing VPN configuration..."
+        InstallVPNConfig
+    elif [ $PROXY_MODE = 3 ]; then
+        PrintBold "Installing transparent proxy configuration..."
+        InstallTPConfig
+    else
+        PrintBold "Installing Tor configuration..."
+        InstallTorConfig
+        if `/etc/init.d/tor enabled`; then
+            /etc/init.d/tor restart
+        fi
+    fi
+
+    if [ $BLACKLIST = 2 ]; then
+        PrintBold "Set RKN blacklist..."
+        EnableBlacklist
+    fi
+
+    if [ $LUA_MODULE = 1 ]; then
+        PrintBold "Installing lua module..."
+        InstallLuaModule
+    fi
+
+    if [ $LUCI_APP = 1 ]; then
+        PrintBold "Installing luci app..."
+        InstallLuciApp
+    fi
+
+    RunAtStartup
+    SetCronTask
+else
+    PrintBold "An error occurred while installing the ruantiblock package!"
+fi
+
+exit 0
+}
+
 # System Details
 MODEL=$(cat /tmp/sysinfo/model)
 source /etc/os-release
@@ -1118,7 +1177,15 @@ add_dns_resolver
 
 add_tunnel
 
+add_mark
 
+add_zone
+
+show_manual
+
+add_set
+
+add_getdomains
 
 printf "\033[32;1mRestart network\033[0m\n"
 /etc/init.d/network restart
